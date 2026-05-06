@@ -50,28 +50,82 @@ def estimate_normalize_scale(vertices: list[list[float]]) -> float:
 def build_shape_key_weights_from_frontend(effective_emotions: dict[str, float], available_keys) -> dict[str, float]:
     available_map = {str(k).lower(): str(k) for k in available_keys}
 
-    alias_groups = {
-        "Happy": ["joy", "happy"],
-        "Sad": ["sad"],
-        "Angry": ["angry"],
-        "Surprise": ["surprise"],
-        "Disgust": ["disgust"],
-        "Fear": ["fear"],
+    ict_presets = {
+        "Happy": {
+            "mouthSmile_L": 0.35,
+            "mouthSmile_R": 0.35,
+            "cheekSquint_L": 0.15,
+            "cheekSquint_R": 0.15,
+            "eyeSquint_L": 0.06,
+            "eyeSquint_R": 0.06,
+            "mouthUpperUp_L": 0.00,
+            "mouthUpperUp_R": 0.00,
+        },
+        "Sad": {
+            "mouthFrown_L": 0.45,
+            "mouthFrown_R": 0.45,
+            "browInnerUp_L": 0.35,
+            "browInnerUp_R": 0.35,
+            "eyeLookDown_L": 0.20,
+            "eyeLookDown_R": 0.20,
+        },
+        "Angry": {
+            "browDown_L": 0.45,
+            "browDown_R": 0.45,
+            "eyeSquint_L": 0.25,
+            "eyeSquint_R": 0.25,
+            "mouthPress_L": 0.30,
+            "mouthPress_R": 0.30,
+        },
+        "Surprise": {
+            "jawOpen": 0.45,
+            "eyeWide_L": 0.35,
+            "eyeWide_R": 0.35,
+            "browInnerUp_L": 0.35,
+            "browInnerUp_R": 0.35,
+            "browOuterUp_L": 0.25,
+            "browOuterUp_R": 0.25,
+        },
+        "Disgust": {
+            "noseSneer_L": 0.40,
+            "noseSneer_R": 0.40,
+            "mouthUpperUp_L": 0.25,
+            "mouthUpperUp_R": 0.25,
+            "cheekSquint_L": 0.15,
+            "cheekSquint_R": 0.15,
+        },
+        "Fear": {
+            "eyeWide_L": 0.40,
+            "eyeWide_R": 0.40,
+            "browInnerUp_L": 0.35,
+            "browInnerUp_R": 0.35,
+            "jawOpen": 0.25,
+            "mouthStretch_L": 0.25,
+            "mouthStretch_R": 0.25,
+        },
     }
 
     result = {}
-    for emotion_name, aliases in alias_groups.items():
-        value = float(effective_emotions.get(emotion_name, 0.0))
-        if value <= 0:
+
+    for emotion_name, emotion_intensity in effective_emotions.items():
+        intensity = float(emotion_intensity)
+        if intensity <= 0:
             continue
 
-        for alias in aliases:
-            if alias.lower() in available_map:
-                real_key_name = available_map[alias.lower()]
-                result[real_key_name] = value
-                break
+        preset = ict_presets.get(emotion_name)
+        if preset is None:
+            continue
+
+        for key_name, preset_value in preset.items():
+            real_key_name = available_map.get(key_name.lower())
+            if real_key_name is not None:
+                result[real_key_name] = result.get(real_key_name, 0.0) + preset_value * intensity
+
+    for key_name in result:
+        result[key_name] = max(0.0, min(1.0, result[key_name]))
 
     return result
+
 
 def load_shape_key_json_from_path(path: Path):
     if not path.exists():
@@ -111,6 +165,8 @@ def build_result_vertices(
     if shape_key_data is not None:
         shape_key_entries = get_shape_key_entries(shape_key_data)
 
+        print("真实 shape key 名称 =", list(shape_key_entries.keys())[:50])
+
         shape_key_weights = build_shape_key_weights_from_frontend(
             effective_emotions,
             shape_key_entries.keys(),
@@ -136,9 +192,14 @@ def build_result_vertices(
         print("shape_only_mean_delta =", float(shape_delta.mean()))
         print("shape_only_changed_vertices =", int((shape_delta > 1e-6).sum()))
 
-    residual_emotions = dict(effective_emotions)
-    residual_emotions["Happy"] = 0.0
-    residual_emotions["Sad"] = 0.0
+    residual_emotions = {
+        "Happy": 0.0,
+        "Sad": 0.0,
+        "Angry": 0.0,
+        "Surprise": 0.0,
+        "Disgust": 0.0,
+        "Fear": 0.0,
+    }
 
     result_vertices = deform_mesh(
         shape_key_vertices,
@@ -205,7 +266,7 @@ async def deform_api(
             shape_temp_path = save_upload_to_temp(shape_key_file, ".json")
             shape_key_data = load_shape_key_json_from_path(shape_temp_path)
         else:
-            default_shape_path = BASE_DIR / "shape_key_deltas.json"
+            default_shape_path = BASE_DIR / "shape_key_deltas_new.json"
             shape_key_data = load_shape_key_json_from_path(default_shape_path)
 
         result_vertices, effective_emotions = build_result_vertices(
@@ -222,7 +283,9 @@ async def deform_api(
         delta = np.linalg.norm(result_np - base_np, axis=1)
 
         print("effective_emotions =", effective_emotions)
-        print("available_shape_keys =", list(shape_key_data.keys()) if shape_key_data else [])
+
+        shape_key_entries = get_shape_key_entries(shape_key_data)
+        print("available_shape_keys =", list(shape_key_entries.keys())[:50] if shape_key_entries else [])
         print("max_delta =", float(delta.max()))
         print("mean_delta =", float(delta.mean()))
         print("changed_vertices =", int((delta > 1e-6).sum()))
